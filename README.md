@@ -58,6 +58,29 @@ dap.configurations.java = {
 }
 ```
 
+## Usage
+
+A `.hprof` file cannot be executed, therefore most of the functionality
+available during a regular debug session won't work. There are no breakpoints
+to hit, no stopped events, or anything like that.
+
+Instead you can query the heap dump via `OQL` via the debug adapter's client's
+evaluate functionality.
+
+Some examples of `OQL` queries:
+
+```oql
+select file from java.io.File file
+```
+
+```oql
+select file.path from java.io.File file
+```
+
+```oql
+select s from int[] s where s.length > 4000
+```
+
 
 ## Development
 
