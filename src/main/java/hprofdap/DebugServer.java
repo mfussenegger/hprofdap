@@ -25,6 +25,9 @@ import org.eclipse.lsp4j.debug.VariablesArguments;
 import org.eclipse.lsp4j.debug.VariablesResponse;
 import org.eclipse.lsp4j.debug.services.IDebugProtocolClient;
 import org.eclipse.lsp4j.debug.services.IDebugProtocolServer;
+import org.eclipse.lsp4j.jsonrpc.ResponseErrorException;
+import org.eclipse.lsp4j.jsonrpc.messages.ResponseError;
+import org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode;
 import org.netbeans.lib.profiler.heap.Field;
 import org.netbeans.lib.profiler.heap.Heap;
 import org.netbeans.lib.profiler.heap.HeapFactory;
@@ -59,8 +62,9 @@ public class DebugServer implements IDebugProtocolServer {
     public CompletableFuture<Void> launch(Map<String, Object> args) {
         Object object = args.get("filepath");
         if (!(object instanceof String filepath)) {
-            return CompletableFuture.failedFuture(
-                new IllegalArgumentException("Expected `filepath` property in launch arguments"));
+            String message = "Expected `filepath` property in launch arguments";
+            var error = new ResponseError(ResponseErrorCode.InvalidParams, message, null);
+            throw new ResponseErrorException(error);
         }
         try {
             heap = HeapFactory.createHeap(new File(filepath));
@@ -86,10 +90,7 @@ public class DebugServer implements IDebugProtocolServer {
 
     @Override
     public CompletableFuture<ScopesResponse> scopes(ScopesArguments args) {
-        if (engine == null) {
-            return CompletableFuture.failedFuture(
-                new IllegalStateException("Must launch session before calling evaluate"));
-        }
+        raiseIfNotLaunched("scopes");
         Scope[] scopes = new Scope[0];
         ScopesResponse scopesResponse = new ScopesResponse();
         scopesResponse.setScopes(scopes);
@@ -98,10 +99,7 @@ public class DebugServer implements IDebugProtocolServer {
 
     @Override
     public CompletableFuture<EvaluateResponse> evaluate(EvaluateArguments args) {
-        if (engine == null) {
-            return CompletableFuture.failedFuture(
-                new IllegalStateException("Must launch session before calling evaluate"));
-        }
+        raiseIfNotLaunched("evaluate");
         String expression = args.getExpression();
         List<Instance> instances = new ArrayList<>();
         try {
@@ -117,7 +115,7 @@ public class DebugServer implements IDebugProtocolServer {
                 }
             });
         } catch (OQLException e) {
-            return CompletableFuture.failedFuture(e);
+            throw new ResponseErrorException(new ResponseError(ResponseErrorCode.RequestFailed, e.getMessage(), null));
         }
         EvaluateResponse evaluateResponse = new EvaluateResponse();
         if (instances.isEmpty()) {
@@ -132,6 +130,14 @@ public class DebugServer implements IDebugProtocolServer {
             evaluateResponse.setVariablesReference(instanceCache.put(instances));
         }
         return CompletableFuture.completedFuture(evaluateResponse);
+    }
+
+    private void raiseIfNotLaunched(String method) {
+        if (engine == null) {
+            String message = "Must launch session before calling " + method;
+            var responseError = new ResponseError(ResponseErrorCode.InvalidRequest, message, null);
+            throw new ResponseErrorException(responseError);
+        }
     }
 
     private void setValues(Variable variable, Instance instance) {
