@@ -71,7 +71,8 @@ public class DebugServer implements IDebugProtocolServer {
         try {
             heap = HeapFactory.createHeap(new File(filepath));
         } catch (IOException e) {
-            return CompletableFuture.failedFuture(e);
+            var error = new ResponseError(ResponseErrorCode.RequestFailed, e.getMessage(), null);
+            throw new ResponseErrorException(error);
         }
         assert OQLEngine.isOQLSupported() : "OQL must be supported";
         engine = new OQLEngine(heap);
