@@ -25,6 +25,8 @@ import org.eclipse.lsp4j.debug.VariablesArguments;
 import org.eclipse.lsp4j.debug.VariablesResponse;
 import org.eclipse.lsp4j.debug.services.IDebugProtocolClient;
 import org.eclipse.lsp4j.debug.services.IDebugProtocolServer;
+import org.eclipse.lsp4j.jsonrpc.CancelChecker;
+import org.eclipse.lsp4j.jsonrpc.CompletableFutures;
 import org.eclipse.lsp4j.jsonrpc.ResponseErrorException;
 import org.eclipse.lsp4j.jsonrpc.messages.ResponseError;
 import org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode;
@@ -99,37 +101,40 @@ public class DebugServer implements IDebugProtocolServer {
 
     @Override
     public CompletableFuture<EvaluateResponse> evaluate(EvaluateArguments args) {
-        raiseIfNotLaunched("evaluate");
-        String expression = args.getExpression();
-        List<Instance> instances = new ArrayList<>();
-        try {
-            engine.executeQuery(expression, new ObjectVisitor() {
+        return CompletableFutures.computeAsync(cancelToken -> {
+            raiseIfNotLaunched("evaluate");
+            String expression = args.getExpression();
+            List<Instance> instances = new ArrayList<>();
+            try {
+                engine.executeQuery(expression, new ObjectVisitor() {
 
-                @Override
-                public boolean visit(Object arg0) {
-                    if (!(arg0 instanceof Instance instance)) {
+                    @Override
+                    public boolean visit(Object arg0) {
+                        cancelToken.checkCanceled();
+                        if (!(arg0 instanceof Instance instance)) {
+                            return false;
+                        }
+                        instances.add(instance);
                         return false;
                     }
-                    instances.add(instance);
-                    return false;
-                }
-            });
-        } catch (OQLException e) {
-            throw new ResponseErrorException(new ResponseError(ResponseErrorCode.RequestFailed, e.getMessage(), null));
-        }
-        EvaluateResponse evaluateResponse = new EvaluateResponse();
-        if (instances.isEmpty()) {
-            evaluateResponse.setResult("No result");
-        } else if (instances.size() == 1) {
-            Instance instance = instances.get(0);
-            JavaClass javaClass = instance.getJavaClass();
-            evaluateResponse.setResult(javaClass.getName());
-            evaluateResponse.setVariablesReference(instanceCache.put(instance));
-        } else {
-            evaluateResponse.setResult("Collection [" + instances.size() + "]");
-            evaluateResponse.setVariablesReference(instanceCache.put(instances));
-        }
-        return CompletableFuture.completedFuture(evaluateResponse);
+                });
+            } catch (OQLException e) {
+                throw new ResponseErrorException(new ResponseError(ResponseErrorCode.RequestFailed, e.getMessage(), null));
+            }
+            EvaluateResponse evaluateResponse = new EvaluateResponse();
+            if (instances.isEmpty()) {
+                evaluateResponse.setResult("No result");
+            } else if (instances.size() == 1) {
+                Instance instance = instances.get(0);
+                JavaClass javaClass = instance.getJavaClass();
+                evaluateResponse.setResult(javaClass.getName());
+                evaluateResponse.setVariablesReference(instanceCache.put(instance));
+            } else {
+                evaluateResponse.setResult("Collection [" + instances.size() + "]");
+                evaluateResponse.setVariablesReference(instanceCache.put(instances));
+            }
+            return evaluateResponse;
+        });
     }
 
     private void raiseIfNotLaunched(String method) {
@@ -199,7 +204,7 @@ public class DebugServer implements IDebugProtocolServer {
     }
 
     @SuppressWarnings("unchecked")
-    private List<Variable> toVariables(Instance instance) {
+    private List<Variable> toVariables(CancelChecker cancelToken, Instance instance) {
         List<Variable> variables = new ArrayList<>();
         JavaClass javaClass = instance.getJavaClass();
         String className = javaClass.getName();
@@ -207,13 +212,14 @@ public class DebugServer implements IDebugProtocolServer {
         if (fields.isEmpty()) {
             switch (instance) {
                 case ObjectArrayInstance arrayInstance -> {
-                    variables.addAll(toVariables((List<Instance>) arrayInstance.getValues()));
+                    variables.addAll(toVariables(cancelToken, (List<Instance>) arrayInstance.getValues()));
                 }
                 case PrimitiveArrayInstance arrayInstance -> {
                     List<?> values = arrayInstance.getValues();
                     String fmt = idxFormat(values.size());
                     String elementType = className.substring(0, className.length() - 3);
                     for (int i = 0; i < values.size(); i++) {
+                        cancelToken.checkCanceled();
                         Object value = values.get(i);
                         Variable variable = new Variable();
                         variables.add(variable);
@@ -240,12 +246,13 @@ public class DebugServer implements IDebugProtocolServer {
         return "%0" + numDigits + "d";
     }
 
-    private List<Variable> toVariables(List<Instance> instances) {
+    private List<Variable> toVariables(CancelChecker cancelToken, List<Instance> instances) {
         List<Variable> variables = new ArrayList<>(Math.min(101, instances.size()));
         int i = 0;
         int numDigits = (int)(Math.floor(Math.log10(instances.size())) + 1);
         String fmt = "%0" + numDigits + "d";
         for (var instance : instances) {
+            cancelToken.checkCanceled();
             if (i > 100) {
                 Variable remainder = new Variable();
                 variables.add(remainder);
@@ -269,13 +276,17 @@ public class DebugServer implements IDebugProtocolServer {
     public CompletableFuture<VariablesResponse> variables(VariablesArguments args) {
         int variablesReference = args.getVariablesReference();
         Var var = instanceCache.get(variablesReference);
-        var response = new VariablesResponse();
-        response.setVariables(
-            var.object()
-                .bimap(this::toVariables, this::toVariables)
-                .toArray(Variable[]::new)
-        );
-        return CompletableFuture.completedFuture(response);
+        return CompletableFutures.computeAsync(cancelToken -> {
+            var response = new VariablesResponse();
+            response.setVariables(
+                var.object()
+                    .bimap(
+                        instance -> toVariables(cancelToken, instance),
+                        instances -> toVariables(cancelToken, instances))
+                    .toArray(Variable[]::new)
+            );
+            return response;
+        });
     }
 
     public void setClientProxy(IDebugProtocolClient remoteProxy) {
