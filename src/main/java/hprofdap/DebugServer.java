@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 
 import org.eclipse.lsp4j.debug.Capabilities;
@@ -106,16 +107,20 @@ public class DebugServer implements IDebugProtocolServer {
             raiseIfNotLaunched("evaluate");
             String expression = args.getExpression();
             List<Instance> instances = new ArrayList<>();
+            List<Object> values = new ArrayList<>();
             try {
                 engine.executeQuery(expression, new ObjectVisitor() {
 
                     @Override
                     public boolean visit(Object arg0) {
                         cancelToken.checkCanceled();
-                        if (!(arg0 instanceof Instance instance)) {
-                            return false;
+                        switch (arg0) {
+                            case Instance instance -> { instances.add(instance); }
+                            case String str -> { values.add(str); }
+                            case Number number -> { values.add(number); }
+                            case Map<?, ?> map -> { values.add(map); }
+                            default -> {}
                         }
-                        instances.add(instance);
                         return false;
                     }
                 });
@@ -124,15 +129,20 @@ public class DebugServer implements IDebugProtocolServer {
             }
             EvaluateResponse evaluateResponse = new EvaluateResponse();
             if (instances.isEmpty()) {
-                evaluateResponse.setResult("No result");
+                if (values.isEmpty()) {
+                    evaluateResponse.setResult("No result");
+                } else {
+                    evaluateResponse.setResult("Collection [" + values.size() + "]");
+                    evaluateResponse.setVariablesReference(instanceCache.put(new ValueVar(values)));
+                }
             } else if (instances.size() == 1) {
                 Instance instance = instances.get(0);
                 JavaClass javaClass = instance.getJavaClass();
                 evaluateResponse.setResult(javaClass.getName());
-                evaluateResponse.setVariablesReference(instanceCache.put(instance));
+                evaluateResponse.setVariablesReference(instanceCache.put(new InstanceVar(instance)));
             } else {
                 evaluateResponse.setResult("Collection [" + instances.size() + "]");
-                evaluateResponse.setVariablesReference(instanceCache.put(instances));
+                evaluateResponse.setVariablesReference(instanceCache.put(new InstancesVar(instances)));
             }
             return evaluateResponse;
         });
@@ -169,7 +179,7 @@ public class DebugServer implements IDebugProtocolServer {
                 variable.setType("java.util.HashMap");
                 Integer size = (Integer) instance.getValueOfField("size");
                 variable.setValue("java.util.HashMap size=" + size);
-                variable.setVariablesReference(instanceCache.put(instance));
+                variable.setVariablesReference(instanceCache.put(new InstanceVar(instance)));
             }
             default -> {
                 if (instance instanceof PrimitiveArrayInstance arrayInstance) {
@@ -177,7 +187,7 @@ public class DebugServer implements IDebugProtocolServer {
                 } else {
                     variable.setValue(name);
                 }
-                variable.setVariablesReference(instanceCache.put(instance));
+                variable.setVariablesReference(instanceCache.put(new InstanceVar(instance)));
             }
         };
     }
@@ -250,8 +260,7 @@ public class DebugServer implements IDebugProtocolServer {
     private List<Variable> toVariables(CancelChecker cancelToken, List<Instance> instances) {
         List<Variable> variables = new ArrayList<>(Math.min(101, instances.size()));
         int i = 0;
-        int numDigits = (int)(Math.floor(Math.log10(instances.size())) + 1);
-        String fmt = "%0" + numDigits + "d";
+        String fmt = idxFormat(instances.size());
         for (var instance : instances) {
             cancelToken.checkCanceled();
             if (i > 100) {
@@ -259,7 +268,7 @@ public class DebugServer implements IDebugProtocolServer {
                 variables.add(remainder);
                 remainder.setName("more");
                 remainder.setValue("...");
-                int varRef = instanceCache.put(instances.subList(i, instances.size()));
+                int varRef = instanceCache.put(new InstancesVar(instances.subList(i, instances.size())));
                 remainder.setVariablesReference(varRef);
                 break;
             }
@@ -272,6 +281,54 @@ public class DebugServer implements IDebugProtocolServer {
         return variables;
     }
 
+    private List<Variable> valuesToVariables(CancelChecker cancelToken, List<Object> values) {
+        List<Variable> result = new ArrayList<>();
+        String fmt = idxFormat(values.size());
+        int i = 0;
+        for (Object value : values) {
+            cancelToken.checkCanceled();
+            if (i > 100) {
+                Variable remainder = new Variable();
+                result.add(remainder);
+                remainder.setName("more");
+                remainder.setValue("...");
+                int varRef = instanceCache.put(new ValueVar(values.subList(i, values.size())));
+                remainder.setVariablesReference(varRef);
+                break;
+            }
+            if (value instanceof Map<?, ?> map) {
+                Variable variable = new Variable();
+                result.add(variable);
+                variable.setType(value.getClass().getSimpleName());
+                variable.setValue("Map: size=" + map.size() + " " + map.toString());
+                variable.setName(String.format(Locale.ENGLISH, fmt, i));
+                int varRef = instanceCache.put(new MapVar(map));
+                variable.setVariablesReference(varRef);
+            } else {
+                Variable variable = new Variable();
+                result.add(variable);
+                variable.setType(value.getClass().getSimpleName());
+                variable.setValue(Objects.toString(value, "null"));
+                variable.setName(String.format(Locale.ENGLISH, fmt, i));
+            }
+            i++;
+        }
+        return result;
+    }
+
+    private List<Variable> mapToVariables(CancelChecker cancelToken, Map<?, ?> map) {
+        List<Variable> result = new ArrayList<>();
+        for (var entry : map.entrySet()) {
+            Object key = entry.getKey();
+            Object value = entry.getValue();
+            Variable variable = new Variable();
+            result.add(variable);
+            variable.setType(value.getClass().getSimpleName());
+            variable.setName(Objects.toString(key, "unknown"));
+            variable.setValue(Objects.toString(value, "null"));
+        }
+        return result;
+    }
 
     @Override
     public CompletableFuture<VariablesResponse> variables(VariablesArguments args) {
@@ -279,13 +336,14 @@ public class DebugServer implements IDebugProtocolServer {
         Var var = instanceCache.get(variablesReference);
         return CompletableFutures.computeAsync(cancelToken -> {
             var response = new VariablesResponse();
-            response.setVariables(
-                var.object()
-                    .bimap(
-                        instance -> toVariables(cancelToken, instance),
-                        instances -> toVariables(cancelToken, instances))
-                    .toArray(Variable[]::new)
-            );
+            List<Variable> variables = switch (var) {
+                case InstanceVar instanceVar -> toVariables(cancelToken, instanceVar.instance());
+                case InstancesVar instancesVar -> toVariables(cancelToken, instancesVar.instances());
+                case ValueVar valueVar -> valuesToVariables(cancelToken, valueVar.values());
+                case MapVar mapVar -> mapToVariables(cancelToken, mapVar.map());
+            };
+            Variable[] vars = variables.toArray(Variable[]::new);
+            response.setVariables(vars);
             return response;
         });
     }

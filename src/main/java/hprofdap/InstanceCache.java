@@ -1,11 +1,8 @@
 package hprofdap;
 
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import org.netbeans.lib.profiler.heap.Instance;
 
 public final class InstanceCache {
 
@@ -15,18 +12,10 @@ public final class InstanceCache {
     public InstanceCache() {
     }
 
-    private int put(Either<Instance, List<Instance>> either) {
+    public int put(Var var) {
         int id = instanceIds.incrementAndGet();
-        vars.put(id, new Var(id, either));
+        vars.put(id, var);
         return id;
-    }
-
-    public int put(Instance instance) {
-        return put(Either.left(instance));
-    }
-
-    public int put(List<Instance> instances) {
-        return put(Either.right(instances));
     }
 
     public Var get(int ref) {
