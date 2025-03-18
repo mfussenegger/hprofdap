@@ -10,13 +10,13 @@
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <maven.compiler.source>22</maven.compiler.source>
-    <maven.compiler.target>22</maven.compiler.target>
-    <maven.compiler.release>22</maven.compiler.release>
+    <maven.compiler.source>23</maven.compiler.source>
+    <maven.compiler.target>23</maven.compiler.target>
+    <maven.compiler.release>23</maven.compiler.release>
     <argLine>--engine.WarnInterpreterOnly=false</argLine>
     <polyglot.engine.WarnInterpreterOnly>false</polyglot.engine.WarnInterpreterOnly>
 
-    <graalvm.version>24.0.1</graalvm.version>
+    <graalvm.version>24.1.2</graalvm.version>
     <lsp4j.version>0.23.1</lsp4j.version>
   </properties>
 
