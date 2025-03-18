@@ -216,17 +216,18 @@ public class DebugServer implements IDebugProtocolServer {
 
     @SuppressWarnings("unchecked")
     private List<Variable> toVariables(CancelChecker cancelToken, Instance instance) {
-        List<Variable> variables = new ArrayList<>();
+        List<Variable> variables;
         JavaClass javaClass = instance.getJavaClass();
         String className = javaClass.getName();
         List<?> fields = javaClass.getFields();
         if (fields.isEmpty()) {
             switch (instance) {
                 case ObjectArrayInstance arrayInstance -> {
-                    variables.addAll(toVariables(cancelToken, (List<Instance>) arrayInstance.getValues()));
+                    variables = toVariables(cancelToken, (List<Instance>) arrayInstance.getValues());
                 }
                 case PrimitiveArrayInstance arrayInstance -> {
                     List<?> values = arrayInstance.getValues();
+                    variables = new ArrayList<>(values.size());
                     String fmt = idxFormat(values.size());
                     String elementType = className.substring(0, className.length() - 3);
                     for (int i = 0; i < values.size(); i++) {
@@ -240,9 +241,14 @@ public class DebugServer implements IDebugProtocolServer {
                     }
                 }
                 default -> {
+                    Variable variable = new Variable();
+                    variable.setValue(instance.toString());
+                    variable.setName("Unknown structure");
+                    variables = List.of(variable);
                 }
             }
         } else {
+            variables = new ArrayList<>(fields.size());
             for (var field : fields) {
                 if (field instanceof Field f) {
                     variables.add(toVariable(instance, f));

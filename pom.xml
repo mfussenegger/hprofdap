@@ -13,7 +13,6 @@
     <maven.compiler.source>23</maven.compiler.source>
     <maven.compiler.target>23</maven.compiler.target>
     <maven.compiler.release>23</maven.compiler.release>
-    <argLine>--engine.WarnInterpreterOnly=false</argLine>
     <polyglot.engine.WarnInterpreterOnly>false</polyglot.engine.WarnInterpreterOnly>
 
     <graalvm.version>24.1.2</graalvm.version>
@@ -22,6 +21,11 @@
 
   <build>
     <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.5.2</version>
+      </plugin>
       <plugin>
         <artifactId>maven-assembly-plugin</artifactId>
         <version>3.7.1</version>
@@ -81,6 +85,18 @@
       <groupId>org.netbeans.modules</groupId>
       <artifactId>org-netbeans-modules-profiler-oql</artifactId>
       <version>RELEASE210</version>
+    </dependency>
+
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>5.12.1</version>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <version>3.27.3</version>
     </dependency>
   </dependencies>
 </project>
