@@ -264,17 +264,20 @@ public class DebugServer implements IDebugProtocolServer {
     }
 
     private List<Variable> toVariables(CancelChecker cancelToken, List<Instance> instances) {
-        List<Variable> variables = new ArrayList<>(Math.min(101, instances.size()));
-        int i = 0;
-        String fmt = idxFormat(instances.size());
+        int limit = 100;
+        List<Variable> variables = new ArrayList<>(Math.min(limit + 1, instances.size()));
+        int i = 1;
+        int numListed = Math.min(limit, instances.size());
+        String fmt = idxFormat(numListed);
         for (var instance : instances) {
             cancelToken.checkCanceled();
-            if (i > 100) {
+            if (i > limit) {
                 Variable remainder = new Variable();
                 variables.add(remainder);
                 remainder.setName("more");
-                remainder.setValue("...");
-                int varRef = instanceCache.put(new InstancesVar(instances.subList(i, instances.size())));
+                List<Instance> remainingInstances = instances.subList(i, instances.size());
+                remainder.setValue("next " + Math.min(limit, remainingInstances.size()) + "/" + remainingInstances.size());
+                int varRef = instanceCache.put(new InstancesVar(remainingInstances));
                 remainder.setVariablesReference(varRef);
                 break;
             }
